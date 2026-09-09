@@ -1,0 +1,156 @@
+# Cross-Sectional Asset Pricing Framework — Walkthrough
+
+Implementation of the Uddin, Akter, and Hassan (2026) framework for predicting monthly excess returns of S&P 500 stocks using 510 covariates, 39 technical indicators, and 6 machine learning models.
+
+---
+
+## Project Structure
+
+```
+BTP/
+├── config.py                      # Central configuration
+├── requirements.txt               # Python dependencies
+├── main.py                        # Pipeline orchestrator
+├── data/
+│   ├── __init__.py
+│   └── download.py                # 6 data source downloaders
+├── features/
+│   ├── __init__.py
+│   ├── firm_chars.py              # 124 C&Z characteristics
+│   ├── macro.py                   # PCA + 496 interactions
+│   ├── technical.py               # 39 technical indicators
+│   └── builder.py                 # 510-covariate matrix assembly
+├── preprocessing/
+│   ├── __init__.py
+│   └── pipeline.py                # Exclusion + ffill + mean imputation
+├── models/
+│   ├── __init__.py
+│   ├── linear.py                  # OLS + LASSO
+│   ├── tree.py                    # Decision Tree + Random Forest
+│   ├── boosting.py                # XGBoost/GBRT
+│   └── deep_nn.py                 # PyTorch Deep-NN (5 layers)
+├── training/
+│   ├── __init__.py
+│   └── rolling_window.py          # Expanding window evaluator
+└── analysis/
+    ├── __init__.py
+    ├── shap_analysis.py           # SHAP on Deep-NN
+    ├── portfolio_sorts.py         # Quintile sorts + H-L
+    ├── dm_test.py                 # Diebold-Mariano test
+    └── uncertainty.py             # BEX/JNL regime analysis
+```
+
+**24 files total** across 7 modules.
+
+---
+
+## Module Summary
+
+### 1. Data Acquisition — [download.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/data/download.py)
+
+| Source | Function | Fallback |
+|--------|----------|----------|
+| S&P 500 tickers | Wikipedia scrape | — |
+| Stock prices (monthly OHLCV) | `yfinance` | — |
+| Risk-free rate (3M T-Bill) | FRED `TB3MS` | 2% proxy |
+| Chen & Zimmermann chars | OpenAssetPricing.com | Synthetic |
+| Welch & Goyal 14 macro factors | Google Sheets export | Synthetic |
+| BEX/JNL uncertainty | FRED VIX proxy | Synthetic |
+
+---
+
+### 2. Feature Engineering
+
+#### [firm_chars.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/features/firm_chars.py)
+Filters C&Z dataset to **124 characteristics** with ≥40% non-missing values, ranked by coverage.
+
+#### [macro.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/features/macro.py)
+- PCA on 14 macro factors → **3 principal components** (99.9% variance explained)
+- **496 interaction terms**: 124 chars × (3 PCs + 1 constant)
+- Final: 496 interactions + 14 raw macro = **510 covariates**
+
+#### [technical.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/features/technical.py)
+All **39 technical indicators** implemented from scratch (no TA-Lib dependency):
+
+| # | Indicators | Count |
+|---|-----------|-------|
+| 1 | Bollinger Bands (MA, Upper, Lower, Width, %) | 5 |
+| 2 | DMI+, DMI−, ADX, ADXR | 4 |
+| 3 | EMA, CCI, Fear/Greed, Hurst | 4 |
+| 4 | Min, Max, Retracement | 3 |
+| 5 | Momentum, Momentum MA | 2 |
+| 6 | MACD, Signal, Diff | 3 |
+| 7 | MA Envelopes | 1 |
+| 8 | MA Oscillator, Signal, Diff | 3 |
+| 9 | ROC, Parabolic SAR, RSI, SMA | 4 |
+| 10 | Stochastics %K, %D, %DS, %DSS | 4 |
+| 11 | Trender Up/Down | 2 |
+| 12 | Triangular MA, Variable MA, Weighted MA, Williams %R | 4 |
+| **Total** | | **39** |
+
+---
+
+### 3. Preprocessing — [pipeline.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/preprocessing/pipeline.py)
+
+1. **Feature exclusion**: Drop columns with >60% missing
+2. **Forward fill**: Per-stock temporal fill
+3. **Cross-sectional mean imputation**: Monthly mean across all firms
+
+---
+
+### 4. Models
+
+| Model | File | Key Hyperparameters |
+|-------|------|-------------------|
+| OLS | [linear.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/models/linear.py) | Kitchen-sink 510 predictors |
+| LASSO | [linear.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/models/linear.py) | λ = 1e-3 |
+| Decision Tree | [tree.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/models/tree.py) | CART with greedy splits |
+| Random Forest | [tree.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/models/tree.py) | 50 trees, depth 8 |
+| GBRT/XGBoost | [boosting.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/models/boosting.py) | 50 trees, LR grid-tuned |
+| Deep-NN | [deep_nn.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/models/deep_nn.py) | 64→32→16→8→4, ReLU, Adam |
+
+---
+
+### 5. Training — [rolling_window.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/training/rolling_window.py)
+
+Expanding window with 12-month shifts:
+- **Iteration 1**: Train 1990–2005, Test 2006
+- **Iteration 2**: Train 1990–2006, Test 2007
+- **...**
+- **Iteration 16**: Train 1990–2020, Test 2021
+
+Metrics per iteration: **R²_OOS**, **MSE**, **MAE**
+
+---
+
+### 6. Analysis
+
+| Analysis | File | What it does |
+|----------|------|-------------|
+| SHAP | [shap_analysis.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/analysis/shap_analysis.py) | DeepExplainer on Deep-NN → mean &vert;SHAP&vert; for 39 TIs |
+| Portfolio Sorts | [portfolio_sorts.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/analysis/portfolio_sorts.py) | Quintile sorts → H-L R²_OOS per TI |
+| DM Test | [dm_test.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/analysis/dm_test.py) | Full (510) vs TI-only (39) forecast comparison |
+| Uncertainty | [uncertainty.py](file:///c:/Users/Dell/OneDrive/Desktop/BTP/analysis/uncertainty.py) | R²_OOS in high/low BEX & JNL regimes |
+
+---
+
+## How to Run
+
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Run entire pipeline
+python main.py --all
+
+# 3. Or run individual steps
+python main.py --download     # Download data only
+python main.py --features     # Build features only
+python main.py --train        # Train models only
+python main.py --analyze      # Run analysis only
+```
+
+Results are saved to [results/](file:///c:/Users/Dell/OneDrive/Desktop/BTP/training/rolling_window.py#185-220) including CSV tables and PNG plots.
+
+> [!NOTE]
+> The pipeline includes synthetic data fallbacks for all external sources. If any download fails (C&Z, W&G, FRED), the pipeline will automatically generate synthetic data and continue running, clearly logging which sources used real vs. synthetic data.
